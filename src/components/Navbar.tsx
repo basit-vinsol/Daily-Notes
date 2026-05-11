@@ -1,46 +1,45 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext.tsx';
-import { User, Bell, Search, X, CheckCircle, AlertCircle, Info, Trash2, Filter, CheckCheck, Zap, FileText, Clock } from 'lucide-react';
+import { User, Bell, Search, X, CheckCircle, AlertCircle, Info, Trash2, Filter, CheckCheck, Zap, FileText, Clock, Menu } from 'lucide-react';
 import API from '../api/axios.ts';
 import { motion, AnimatePresence } from 'motion/react';
 import { io, Socket } from 'socket.io-client';
+import { useNavigate } from 'react-router-dom';
 
 const Navbar: React.FC = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [filter, setFilter] = useState('all');
   const [toasts, setToasts] = useState<any[]>([]);
-  const socketRef = React.useRef<Socket | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const socketRef = useRef<Socket | null>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (user) {
       fetchNotifications();
       fetchUnreadCount();
       
-      // Socket connection
       const socket = io('http://localhost:3000');
       socketRef.current = socket;
       socket.emit('join', user.id);
       
       socket.on('new_notification', (data: any) => {
-        console.log('📬 New notification:', data);
-        
-        // Show toast popup first
         const newToast = { ...data, id: Date.now() };
         setToasts(prev => [newToast, ...prev]);
-        
-        // Auto remove toast after 6 seconds
         setTimeout(() => {
           setToasts(prev => prev.filter(t => t.id !== newToast.id));
         }, 6000);
         
-        // Update notification list and count
         fetchNotifications();
         fetchUnreadCount();
         
-        // Browser notification
         if (Notification.permission === 'granted') {
           new Notification('DailyFlow', {
             body: data.message,
@@ -54,13 +53,71 @@ const Navbar: React.FC = () => {
       }
     }
 
+    // Close search on outside click
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setShowSearchResults(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+
     return () => {
       if (socketRef.current) {
         socketRef.current.off('new_notification');
         socketRef.current.close();
       }
+      document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [user]);
+
+  // Quick Search Function
+  const handleSearch = async (query: string) => {
+    setSearchQuery(query);
+    
+    if (query.length < 2) {
+      setSearchResults([]);
+      setShowSearchResults(false);
+      return;
+    }
+
+    try {
+      // Search across multiple endpoints
+      const [todosRes, notesRes] = await Promise.all([
+        API.get('/todos'),
+        API.get('/notes')
+      ]);
+
+      const todos = todosRes.data || [];
+      const notes = notesRes.data || [];
+
+      // Filter results
+      const filteredTodos = todos.filter((t: any) => 
+        t.title?.toLowerCase().includes(query.toLowerCase()) ||
+        t.description?.toLowerCase().includes(query.toLowerCase())
+      ).map((t: any) => ({ ...t, searchType: 'task' }));
+
+      const filteredNotes = notes.filter((n: any) => 
+        n.title?.toLowerCase().includes(query.toLowerCase()) ||
+        n.content?.toLowerCase().includes(query.toLowerCase())
+      ).map((n: any) => ({ ...n, searchType: 'note' }));
+
+      setSearchResults([...filteredTodos.slice(0, 3), ...filteredNotes.slice(0, 3)]);
+      setShowSearchResults(true);
+    } catch (error) {
+      console.error('Search error:', error);
+    }
+  };
+
+  const handleSearchResultClick = (result: any) => {
+    setShowSearchResults(false);
+    setSearchQuery('');
+    
+    if (result.searchType === 'task') {
+      navigate('/todos');
+    } else if (result.searchType === 'note') {
+      navigate('/notes');
+    }
+  };
 
   const fetchNotifications = async (type = 'all') => {
     try {
@@ -162,8 +219,8 @@ const Navbar: React.FC = () => {
 
   return (
     <>
-      {/* Toast Notifications - Bahar UI */}
-      <div className="fixed top-4 right-4 z-[200] space-y-3 w-96 max-w-[calc(100vw-2rem)]">
+      {/* Toast Notifications */}
+      <div className="fixed top-4 right-4 z-[200] space-y-3 w-80 sm:w-96 max-w-[calc(100vw-2rem)]">
         <AnimatePresence>
           {toasts.map((toast, index) => (
             <motion.div
@@ -173,9 +230,7 @@ const Navbar: React.FC = () => {
               exit={{ opacity: 0, x: 100, scale: 0.9 }}
               transition={{ type: "spring", stiffness: 200, damping: 20 }}
               className={`relative overflow-hidden rounded-2xl shadow-2xl p-4 ${getToastColor(toast.type)}`}
-              style={{ zIndex: 200 - index }}
             >
-              {/* Progress bar */}
               <motion.div
                 initial={{ width: "100%" }}
                 animate={{ width: "0%" }}
@@ -184,7 +239,7 @@ const Navbar: React.FC = () => {
               />
               
               <div className="flex items-start gap-3">
-                <div className="p-2 bg-white rounded-xl shadow-sm">
+                <div className="p-2 bg-white rounded-xl shadow-sm flex-shrink-0">
                   {getNotificationIcon(toast.type)}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -212,17 +267,73 @@ const Navbar: React.FC = () => {
       </div>
 
       {/* Header */}
-      <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-4 md:px-8 sticky top-0 z-40">
-        <div className="flex items-center gap-4 bg-gray-50 border border-gray-200 px-3 py-1.5 rounded-full w-full max-w-md lg:w-96">
-          <Search size={18} className="text-gray-400 flex-shrink-0" />
-          <input 
-            type="text" 
-            placeholder="Quick search..." 
-            className="bg-transparent border-none outline-none text-sm w-full"
-          />
+      <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-3 sm:px-4 md:px-8 sticky top-0 z-40">
+        {/* Mobile Menu Button */}
+        <button
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          className="lg:hidden p-2 text-gray-600 hover:bg-gray-100 rounded-lg mr-2"
+        >
+          <Menu size={20} />
+        </button>
+
+        {/* Search Bar with Results */}
+        <div className="flex-1 max-w-md lg:max-w-lg" ref={searchRef}>
+          <div className="relative">
+            <Search size={18} className="absolute left-3 top-2.5 text-gray-400" />
+            <input 
+              type="text" 
+              placeholder="Search tasks & notes..." 
+              value={searchQuery}
+              onChange={(e) => handleSearch(e.target.value)}
+              onFocus={() => searchResults.length > 0 && setShowSearchResults(true)}
+              className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-full text-sm outline-none focus:bg-white focus:border-blue-500 transition-all"
+            />
+            
+            {/* Search Results Dropdown */}
+            <AnimatePresence>
+              {showSearchResults && searchResults.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="absolute top-full mt-2 left-0 right-0 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 overflow-hidden"
+                >
+                  {searchResults.map((result, index) => (
+                    <div
+                      key={`${result.searchType}-${result.id}`}
+                      onClick={() => handleSearchResultClick(result)}
+                      className="p-3 hover:bg-gray-50 cursor-pointer flex items-center gap-3 border-b border-gray-100 last:border-b-0"
+                    >
+                      <div className={`p-2 rounded-lg flex-shrink-0 ${
+                        result.searchType === 'task' ? 'bg-blue-100' : 'bg-purple-100'
+                      }`}>
+                        {result.searchType === 'task' ? (
+                          <CheckCircle size={16} className="text-blue-600" />
+                        ) : (
+                          <FileText size={16} className="text-purple-600" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{result.title}</p>
+                        <p className="text-xs text-gray-500 truncate">
+                          {result.searchType === 'task' ? result.description : result.content}
+                        </p>
+                      </div>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        result.searchType === 'task' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
+                      }`}>
+                        {result.searchType}
+                      </span>
+                    </div>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
 
-        <div className="flex items-center gap-3 md:gap-6">
+        {/* Right Side Icons */}
+        <div className="flex items-center gap-2 sm:gap-4 ml-3 sm:ml-4">
           {/* Notification Bell */}
           <div className="relative">
             <button 
@@ -234,7 +345,7 @@ const Navbar: React.FC = () => {
                 <motion.span
                   initial={{ scale: 0 }}
                   animate={{ scale: 1 }}
-                  className="absolute -top-1 -right-1 w-5 h-5 bg-gradient-to-r from-red-500 to-red-600 rounded-full text-white text-xs flex items-center justify-center font-bold shadow-lg"
+                  className="absolute -top-1 -right-1 w-4 h-4 sm:w-5 sm:h-5 bg-gradient-to-r from-red-500 to-red-600 rounded-full text-white text-[10px] sm:text-xs flex items-center justify-center font-bold shadow-lg"
                 >
                   {unreadCount > 9 ? '9+' : unreadCount}
                 </motion.span>
@@ -242,24 +353,25 @@ const Navbar: React.FC = () => {
             </button>
           </div>
           
-          {/* User Info */}
-          <div className="hidden md:flex items-center gap-3 pl-6 border-l border-gray-200">
-            <div className="text-right">
+          {/* User Info - Desktop */}
+          <div className="hidden sm:flex items-center gap-3 pl-4 sm:pl-6 border-l border-gray-200">
+            <div className="text-right hidden md:block">
               <p className="text-sm font-semibold">{user?.name}</p>
               <p className="text-xs text-gray-500">{user?.email}</p>
             </div>
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 text-white flex items-center justify-center font-bold shadow-lg">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 text-white flex items-center justify-center font-bold text-sm shadow-lg">
               {user?.name?.charAt(0)}
             </div>
           </div>
           
-          <div className="md:hidden w-8 h-8 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 text-white flex items-center justify-center font-bold text-sm">
+          {/* User Avatar - Mobile */}
+          <div className="sm:hidden w-8 h-8 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 text-white flex items-center justify-center font-bold text-xs">
             {user?.name?.charAt(0)}
           </div>
         </div>
       </header>
 
-      {/* Notification Dropdown - Andar List */}
+      {/* Notification Dropdown */}
       <AnimatePresence>
         {showNotifications && (
           <>
@@ -275,13 +387,13 @@ const Navbar: React.FC = () => {
               initial={{ opacity: 0, y: -20, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -20, scale: 0.95 }}
-              className="fixed top-20 right-4 md:right-8 w-96 max-w-[calc(100vw-2rem)] bg-white rounded-2xl shadow-2xl border border-gray-100 z-50 max-h-[600px] overflow-hidden"
+              className="fixed top-16 right-2 sm:top-20 sm:right-4 md:right-8 w-[calc(100vw-1rem)] sm:w-96 max-w-md bg-white rounded-2xl shadow-2xl border border-gray-100 z-50 max-h-[80vh] sm:max-h-[600px] overflow-hidden"
             >
               {/* Header */}
-              <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-bold text-lg flex items-center gap-2">
-                    <Bell size={20} />
+              <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-3 sm:p-4">
+                <div className="flex items-center justify-between mb-2 sm:mb-3">
+                  <h3 className="font-bold text-base sm:text-lg flex items-center gap-2">
+                    <Bell size={18} />
                     Notifications
                     {unreadCount > 0 && (
                       <span className="bg-white/20 px-2 py-0.5 rounded-full text-xs">
@@ -304,7 +416,7 @@ const Navbar: React.FC = () => {
                 </div>
                 
                 {/* Filter Tabs */}
-                <div className="flex gap-1 bg-white/20 rounded-lg p-1 overflow-x-auto">
+                <div className="flex gap-1 bg-white/20 rounded-lg p-1 overflow-x-auto scrollbar-hide">
                   {[
                     { key: 'all', label: 'All' },
                     { key: 'task_assigned', label: 'Assigned' },
@@ -318,7 +430,7 @@ const Navbar: React.FC = () => {
                         e.stopPropagation();
                         handleFilterChange(f.key);
                       }}
-                      className={`flex-shrink-0 text-xs px-2.5 py-1.5 rounded-md transition-all whitespace-nowrap ${
+                      className={`flex-shrink-0 text-[10px] sm:text-xs px-2 sm:px-2.5 py-1.5 rounded-md transition-all whitespace-nowrap ${
                         filter === f.key
                           ? 'bg-white text-gray-900 font-semibold shadow-sm'
                           : 'text-white/80 hover:text-white hover:bg-white/10'
@@ -331,7 +443,7 @@ const Navbar: React.FC = () => {
               </div>
 
               {/* Notifications List */}
-              <div className="max-h-[400px] overflow-y-auto">
+              <div className="max-h-[50vh] sm:max-h-[400px] overflow-y-auto">
                 {notifications.length > 0 ? (
                   notifications.map((notif: any, index) => (
                     <motion.div
@@ -340,31 +452,31 @@ const Navbar: React.FC = () => {
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ delay: index * 0.03 }}
                       onClick={() => !notif.is_read && markAsRead(notif.id)}
-                      className={`p-4 hover:bg-gray-50 cursor-pointer transition-all group relative flex items-start gap-3 ${
+                      className={`p-3 sm:p-4 hover:bg-gray-50 cursor-pointer transition-all group relative flex items-start gap-2 sm:gap-3 ${
                         !notif.is_read ? 'bg-blue-50/30' : ''
                       }`}
                     >
-                      <div className="p-2 bg-gray-100 rounded-lg flex-shrink-0">
+                      <div className="p-1.5 sm:p-2 bg-gray-100 rounded-lg flex-shrink-0">
                         {getNotificationIcon(notif.type)}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between gap-2">
-                          <p className={`text-sm ${!notif.is_read ? 'font-semibold text-gray-900' : 'text-gray-600'}`}>
+                          <p className={`text-xs sm:text-sm ${!notif.is_read ? 'font-semibold text-gray-900' : 'text-gray-600'}`}>
                             {notif.message}
                           </p>
                           <button
                             onClick={(e) => deleteNotification(notif.id, e)}
                             className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
                           >
-                            <Trash2 size={14} />
+                            <Trash2 size={12} />
                           </button>
                         </div>
                         {notif.task_title && (
-                          <p className="text-xs text-blue-600 mt-0.5">📋 {notif.task_title}</p>
+                          <p className="text-[10px] sm:text-xs text-blue-600 mt-0.5">📋 {notif.task_title}</p>
                         )}
-                        <div className="flex items-center gap-2 mt-1.5">
-                          <Clock size={12} className="text-gray-400" />
-                          <p className="text-xs text-gray-400">{getTimeAgo(notif.created_at)}</p>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <Clock size={10} className="text-gray-400" />
+                          <p className="text-[10px] sm:text-xs text-gray-400">{getTimeAgo(notif.created_at)}</p>
                           {!notif.is_read && (
                             <span className="w-1.5 h-1.5 bg-blue-500 rounded-full"></span>
                           )}
@@ -373,10 +485,10 @@ const Navbar: React.FC = () => {
                     </motion.div>
                   ))
                 ) : (
-                  <div className="p-12 text-center">
-                    <Bell className="w-12 h-12 text-gray-200 mx-auto mb-3" />
-                    <p className="text-gray-500 font-medium">No notifications yet</p>
-                    <p className="text-gray-400 text-sm mt-1">We'll keep you updated</p>
+                  <div className="p-8 sm:p-12 text-center">
+                    <Bell className="w-10 h-10 sm:w-12 sm:h-12 text-gray-200 mx-auto mb-3" />
+                    <p className="text-gray-500 font-medium text-sm">No notifications yet</p>
+                    <p className="text-gray-400 text-xs mt-1">We'll keep you updated</p>
                   </div>
                 )}
               </div>
