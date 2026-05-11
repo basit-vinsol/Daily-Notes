@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, Trash2, CheckCircle, Circle, Filter, Search, Flag, Calendar, X } from 'lucide-react';
+import { Plus, Trash2, CheckCircle, Circle, Filter, Search, Flag, Calendar, X, Zap, Clock, Target } from 'lucide-react';
 import API from '../api/axios.ts';
 import { cn } from '../lib/utils.ts';
-import { socket, connectSocket, disconnectSocket } from '../lib/socket.ts';
+import { io, Socket } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext.tsx';
+import { designSystem } from '../lib/design-system.ts';
 
 const Todos: React.FC = () => {
   const { user } = useAuth();
@@ -15,6 +16,7 @@ const Todos: React.FC = () => {
   const [filterPriority, setFilterPriority] = useState('all');
   const [search, setSearch] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+  const [socket, setSocket] = useState<Socket | null>(null);
 
   const fetchTodos = async () => {
     try {
@@ -32,33 +34,36 @@ const Todos: React.FC = () => {
     
     // Connect socket
     if (user) {
-      connectSocket(user.id);
+      const newSocket = io('http://localhost:3000');
+      setSocket(newSocket);
+      newSocket.emit('join', user.id);
       
       // Listen for real-time updates
-      socket.on('todo_created', (data) => {
+      newSocket.on('todo_created', (data) => {
         if (data.userId === user.id || user.role === 'admin') {
           fetchTodos();
         }
       });
       
-      socket.on('todo_updated', (data) => {
+      newSocket.on('todo_updated', (data) => {
         if (data.userId === user.id || user.role === 'admin') {
           fetchTodos();
         }
       });
       
-      socket.on('todo_deleted', (data) => {
+      newSocket.on('todo_deleted', (data) => {
         if (data.userId === user.id || user.role === 'admin') {
           fetchTodos();
         }
       });
+      
+      return () => {
+        newSocket.off('todo_created');
+        newSocket.off('todo_updated');
+        newSocket.off('todo_deleted');
+        newSocket.close();
+      };
     }
-    
-    return () => {
-      socket.off('todo_created');
-      socket.off('todo_updated');
-      socket.off('todo_deleted');
-    };
   }, [user]);
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -89,11 +94,16 @@ const Todos: React.FC = () => {
   };
 
   const handleDelete = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this task?')) return;
+    
     try {
+      console.log('Deleting todo with id:', id);
       await API.delete(`/todos/${id}`);
+      console.log('Todo deleted successfully');
       setTodos(todos.filter((t: any) => t.id !== id));
     } catch (err) {
-      console.error(err);
+      console.error('Error deleting todo:', err);
+      alert('Error deleting task. Please try again.');
     }
   };
 
@@ -116,221 +126,290 @@ const Todos: React.FC = () => {
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6 md:space-y-8">
-      <div className="flex items-end justify-between">
-        <div>
-          <h2 className="text-2xl md:text-3xl font-serif italic mb-1">Todo List</h2>
-          <p className="text-gray-500 font-mono text-xs uppercase tracking-widest">Execute your strategy</p>
-        </div>
-      </div>
-
-      <form onSubmit={handleAdd} className="bg-white border border-[#141414] p-4 md:p-6 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
-        <div className="space-y-4">
-          <input
-            type="text"
-            placeholder="What needs to be done?"
-            className="w-full text-base md:text-lg font-semibold border-none outline-none placeholder:text-gray-300"
-            value={newTodo.title}
-            onChange={(e) => setNewTodo({ ...newTodo, title: e.target.value })}
-          />
-          <textarea
-            placeholder="Add details (optional)"
-            className="w-full text-sm border-none outline-none resize-none placeholder:text-gray-300 min-h-[60px]"
-            value={newTodo.description}
-            onChange={(e) => setNewTodo({ ...newTodo, description: e.target.value })}
-          />
-          
-          <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center gap-3 sm:gap-4 pt-4 border-t border-gray-100">
-            <div className="flex items-center gap-2">
-              <Flag size={14} className="text-gray-400" />
-              <select 
-                className="text-xs font-mono uppercase bg-gray-50 border border-gray-200 outline-none p-1 rounded"
-                value={newTodo.priority}
-                onChange={(e) => setNewTodo({ ...newTodo, priority: e.target.value })}
-              >
-                <option value="low">Low Priority</option>
-                <option value="medium">Medium Priority</option>
-                <option value="high">High Priority</option>
-              </select>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
+      {/* Header */}
+      <motion.div 
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white/80 backdrop-blur-lg border-b border-gray-200 sticky top-0 z-10"
+      >
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-gradient-to-br from-[#60a5fa] to-[#2863af] rounded-xl flex items-center justify-center">
+              <Target className="w-6 h-6 text-white" />
             </div>
-            
-            <div className="flex items-center gap-2">
-              <Calendar size={14} className="text-gray-400" />
-              <input 
-                type="date" 
-                className="text-xs font-mono bg-gray-50 border border-gray-200 outline-none p-1 rounded"
-                value={newTodo.due_date}
-                onChange={(e) => setNewTodo({ ...newTodo, due_date: e.target.value })}
+            <div>
+              <h1 className="text-2xl lg:text-3xl font-bold bg-gradient-to-r from-[#60a5fa] to-[#2863af] bg-clip-text text-transparent">
+                Task Management
+              </h1>
+              <p className="text-gray-600 text-sm">Organize and track your daily tasks</p>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Add Task Form */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white rounded-2xl shadow-lg border border-gray-100 p-6 mb-8"
+        >
+          <form onSubmit={handleAdd} className="space-y-4">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 bg-gradient-to-br from-[#3b82f6] to-[#2863af] rounded-xl flex items-center justify-center flex-shrink-0">
+                <Plus className="w-6 h-6 text-white" />
+              </div>
+              <div className="flex-1 space-y-4">
+                <input
+                  type="text"
+                  placeholder="What needs to be done?"
+                  className="w-full text-lg font-semibold border-2 border-gray-100 rounded-xl px-4 py-3 outline-none focus:border-[#2863af] transition-colors placeholder:text-gray-400"
+                  value={newTodo.title}
+                  onChange={(e) => setNewTodo({ ...newTodo, title: e.target.value })}
+                />
+                <textarea
+                  placeholder="Add details (optional)"
+                  className="w-full text-sm border-2 border-gray-100 rounded-xl px-4 py-3 outline-none focus:border-[#2863af] transition-colors placeholder:text-gray-400 resize-none min-h-[80px]"
+                  value={newTodo.description}
+                  onChange={(e) => setNewTodo({ ...newTodo, description: e.target.value })}
+                />
+                
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <div className="flex items-center gap-2 bg-gray-50 rounded-xl px-4 py-2">
+                    <Flag size={16} className="text-gray-500" />
+                    <select 
+                      className="bg-transparent text-sm font-medium outline-none"
+                      value={newTodo.priority}
+                      onChange={(e) => setNewTodo({ ...newTodo, priority: e.target.value })}
+                    >
+                      <option value="low">Low Priority</option>
+                      <option value="medium">Medium Priority</option>
+                      <option value="high">High Priority</option>
+                    </select>
+                  </div>
+                  
+                  <div className="flex items-center gap-2 bg-gray-50 rounded-xl px-4 py-2">
+                    <Calendar size={16} className="text-gray-500" />
+                    <input 
+                      type="date" 
+                      className="bg-transparent text-sm font-medium outline-none"
+                      value={newTodo.due_date}
+                      onChange={(e) => setNewTodo({ ...newTodo, due_date: e.target.value })}
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="sm:ml-auto bg-gradient-to-r from-[#3b82f6] to-[#2863af] text-white px-6 py-3 rounded-xl font-semibold hover:scale-105 transition-transform flex items-center justify-center gap-2 shadow-lg"
+                  >
+                    <Plus size={18} /> Add Task
+                  </button>
+                </div>
+              </div>
+            </div>
+          </form>
+        </motion.div>
+
+        {/* Search and Filters */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="bg-white rounded-2xl shadow-lg border border-gray-100 p-6 mb-8"
+        >
+          <div className="flex flex-col lg:flex-row gap-4">
+            <div className="relative flex-1">
+              <Search className="absolute left-4 top-3.5 text-gray-400" size={20} />
+              <input
+                type="text"
+                placeholder="Search tasks..."
+                className="w-full pl-12 pr-4 py-3 bg-gray-50 rounded-xl text-sm outline-none focus:bg-white focus:border-2 focus:border-blue-500 transition-all"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
               />
             </div>
-
-            <div className="w-full sm:w-auto sm:ml-auto">
-              <button
-                type="submit"
-                className="w-full sm:w-auto bg-[#141414] text-white px-6 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-black transition-all"
-              >
-                <Plus size={18} /> Add Task
-              </button>
-            </div>
-          </div>
-        </div>
-      </form>
-
-      <div className="space-y-4">
-        <div className="flex flex-col md:flex-row gap-4 items-stretch md:items-center justify-between">
-          <div className="relative w-full md:flex-1">
-            <Search className="absolute left-3 top-2.5 text-gray-400" size={16} />
-            <input
-              type="text"
-              placeholder="Search by title or description..."
-              className="w-full pl-10 pr-4 py-2 bg-white border border-gray-200 rounded-lg text-sm outline-none focus:border-black transition-all"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-          <button 
-            onClick={() => setShowFilters(!showFilters)}
-            className={cn(
-              "flex items-center justify-center gap-2 px-4 py-2 border rounded-lg text-sm transition-all",
-              showFilters ? "bg-black text-white border-black" : "bg-white text-gray-600 border-gray-200 hover:border-black"
-            )}
-          >
-            <Filter size={16} />
-            Filters
-          </button>
-        </div>
-
-        <AnimatePresence>
-          {showFilters && (
-            <motion.div 
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="overflow-hidden"
+            <button 
+              onClick={() => setShowFilters(!showFilters)}
+              className={`px-6 py-3 rounded-xl font-medium transition-all flex items-center gap-2 ${
+                showFilters 
+                  ? "bg-gradient-to-r from-blue-600 to-purple-600 text-white" 
+                  : "bg-gray-50 text-gray-600 hover:bg-gray-100"
+              }`}
             >
-              <div className="bg-white border border-gray-200 p-4 rounded-lg flex flex-col md:flex-row md:flex-wrap gap-4 md:gap-6 shadow-sm">
-                <div className="space-y-2">
-                  <p className="text-[10px] font-mono uppercase text-gray-400">Status</p>
-                  <div className="flex flex-wrap gap-2">
-                    {['all', 'pending', 'completed'].map((s) => (
-                      <button
-                        key={s}
-                        onClick={() => setFilterStatus(s)}
-                        className={cn(
-                          "px-3 py-1 rounded text-xs font-medium border transition-all",
-                          filterStatus === s ? "bg-black text-white border-black" : "bg-white text-gray-500 border-gray-100 hover:border-gray-300"
-                        )}
-                      >
-                        {s.charAt(0).toUpperCase() + s.slice(1)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+              <Filter size={18} />
+              Filters
+            </button>
+          </div>
 
-                <div className="space-y-2">
-                  <p className="text-[10px] font-mono uppercase text-gray-400">Priority</p>
-                  <div className="flex flex-wrap gap-2">
-                    {['all', 'low', 'medium', 'high'].map((p) => (
-                      <button
-                        key={p}
-                        onClick={() => setFilterPriority(p)}
-                        className={cn(
-                          "px-3 py-1 rounded text-xs font-medium border transition-all",
-                          filterPriority === p ? "bg-black text-white border-black" : "bg-white text-gray-500 border-gray-100 hover:border-gray-300"
-                        )}
-                      >
-                        {p.charAt(0).toUpperCase() + p.slice(1)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <button 
-                  onClick={() => {
-                    setFilterStatus('all');
-                    setFilterPriority('all');
-                    setSearch('');
-                  }}
-                  className="md:ml-auto text-xs font-mono text-gray-400 hover:text-black flex items-center gap-1 self-start md:self-end md:mb-1"
-                >
-                  <X size={12} /> Clear All
-                </button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-      <div className="space-y-3">
-        <AnimatePresence mode="popLayout">
-          {loading ? (
-            <div className="text-center py-12 text-gray-400 italic text-sm">Synchronizing...</div>
-          ) : filteredTodos.length > 0 ? (
-            filteredTodos.map((todo: any) => (
-              <motion.div
-                key={todo.id}
-                layout
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 20 }}
-                className="group flex items-start gap-3 md:gap-4 p-3 md:p-4 bg-white border border-gray-200 hover:border-black transition-all shadow-sm"
+          <AnimatePresence>
+            {showFilters && (
+              <motion.div 
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden mt-4"
               >
-                <button
-                  onClick={() => toggleStatus(todo.id, todo.status)}
-                  className="mt-1 flex-shrink-0 transition-colors"
-                  title={`Status: ${todo.status}`}
-                >
-                  {todo.status === 'completed' ? (
-                    <CheckCircle className="text-green-500" size={20} />
-                  ) : todo.status === 'in-progress' ? (
-                    <Circle className="text-yellow-500 fill-yellow-500" size={20} />
-                  ) : (
-                    <Circle className="text-gray-300 group-hover:text-black" size={20} />
-                  )}
-                </button>
-                <div className="flex-1 min-w-0">
-                  <div className="flex flex-wrap items-center gap-2 md:gap-3 mb-1">
-                    <h4 className={cn("font-bold text-base md:text-lg leading-tight", todo.status === 'completed' && "line-through text-gray-400")}>
-                      {todo.title}
-                    </h4>
-                    <span className={cn(
-                      "px-2 py-0.5 rounded text-[10px] font-mono uppercase border",
-                      getPriorityColor(todo.priority)
-                    )}>
-                      {todo.priority}
-                    </span>
-                    {todo.due_date && (
-                      <span className="flex items-center gap-1 text-[10px] font-mono text-gray-400 bg-gray-50 px-2 py-0.5 rounded border border-gray-100">
-                        <Calendar size={10} />
-                        {new Date(todo.due_date).toLocaleDateString()}
-                      </span>
-                    )}
-                    {todo.assigned_to_name && (
-                      <span className="flex items-center gap-1 text-[10px] font-mono text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
-                        Assigned by: {todo.created_by_name}
-                      </span>
-                    )}
+                <div className="pt-4 border-t border-gray-100">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Status</p>
+                      <div className="flex flex-wrap gap-2">
+                        {['all', 'pending', 'in-progress', 'completed'].map((s) => (
+                          <button
+                            key={s}
+                            onClick={() => setFilterStatus(s)}
+                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                              filterStatus === s 
+                                ? "bg-gradient-to-r from-blue-600 to-purple-600 text-white" 
+                                : "bg-gray-50 text-gray-600 hover:bg-gray-100"
+                            }`}
+                          >
+                            {s.charAt(0).toUpperCase() + s.slice(1).replace('-', ' ')}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Priority</p>
+                      <div className="flex flex-wrap gap-2">
+                        {['all', 'low', 'medium', 'high'].map((p) => (
+                          <button
+                            key={p}
+                            onClick={() => setFilterPriority(p)}
+                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                              filterPriority === p 
+                                ? "bg-gradient-to-r from-blue-600 to-purple-600 text-white" 
+                                : "bg-gray-50 text-gray-600 hover:bg-gray-100"
+                            }`}
+                          >
+                            {p.charAt(0).toUpperCase() + p.slice(1)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
-                  {todo.description && (
-                    <p className={cn("text-sm text-gray-500 line-clamp-2", todo.status === 'completed' && "text-gray-300")}>
-                      {todo.description}
-                    </p>
-                  )}
+
+                  <button 
+                    onClick={() => {
+                      setFilterStatus('all');
+                      setFilterPriority('all');
+                      setSearch('');
+                    }}
+                    className="mt-4 text-sm text-gray-500 hover:text-gray-700 flex items-center gap-2"
+                  >
+                    <X size={16} /> Clear all filters
+                  </button>
                 </div>
-                <button
-                  onClick={() => handleDelete(todo.id)}
-                  className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-100 md:opacity-0 md:group-hover:opacity-100 flex-shrink-0"
-                >
-                  <Trash2 size={18} />
-                </button>
               </motion.div>
-            ))
-          ) : (
-            <div className="text-center py-12 border-2 border-dashed border-gray-200 rounded-xl">
-              <p className="text-gray-400 font-serif italic text-sm">No matching tasks found. Refine your query or start fresh.</p>
-            </div>
-          )}
-        </AnimatePresence>
+            )}
+          </AnimatePresence>
+        </motion.div>
+
+        {/* Tasks List */}
+        <div className="space-y-4">
+          <AnimatePresence mode="popLayout">
+            {loading ? (
+              <div className="flex items-center justify-center py-20">
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                  className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full"
+                />
+              </div>
+            ) : filteredTodos.length > 0 ? (
+              filteredTodos.map((todo: any, index) => (
+                <motion.div
+                  key={todo.id}
+                  layout
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ delay: index * 0.05 }}
+                  className="bg-white rounded-2xl shadow-lg border border-gray-100 p-6 hover:shadow-xl transition-all group"
+                >
+                  <div className="flex items-start gap-4">
+                    <button
+                      onClick={() => toggleStatus(todo.id, todo.status)}
+                      className="mt-1 flex-shrink-0 transition-all hover:scale-110"
+                      title={`Status: ${todo.status}`}
+                    >
+                      {todo.status === 'completed' ? (
+                        <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
+                          <CheckCircle className="text-white" size={16} />
+                        </div>
+                      ) : todo.status === 'in-progress' ? (
+                        <div className="w-6 h-6 bg-yellow-500 rounded-full flex items-center justify-center">
+                          <Clock className="text-white" size={14} />
+                        </div>
+                      ) : (
+                        <div className="w-6 h-6 border-2 border-gray-300 rounded-full hover:border-blue-500 transition-colors" />
+                      )}
+                    </button>
+                    
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-3 mb-2">
+                        <h3 className={`text-lg font-semibold ${
+                          todo.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'
+                        }`}>
+                          {todo.title}
+                        </h3>
+                        
+                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                          todo.priority === 'high' ? 'bg-red-100 text-red-700' :
+                          todo.priority === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                          'bg-blue-100 text-blue-700'
+                        }`}>
+                          {todo.priority}
+                        </span>
+                        
+                        {todo.due_date && (
+                          <span className="flex items-center gap-1 text-xs text-gray-500 bg-gray-50 px-3 py-1 rounded-full">
+                            <Calendar size={12} />
+                            {new Date(todo.due_date).toLocaleDateString()}
+                          </span>
+                        )}
+                      </div>
+                      
+                      {todo.description && (
+                        <p className={`text-sm mb-3 ${
+                          todo.status === 'completed' ? 'text-gray-400' : 'text-gray-600'
+                        }`}>
+                          {todo.description}
+                        </p>
+                      )}
+                      
+                      <div className="flex items-center gap-4 text-xs text-gray-500">
+                        <span>Created {new Date(todo.created_at).toLocaleDateString()}</span>
+                        {todo.assigned_to_name && (
+                          <span className="text-blue-600">Assigned to: {todo.assigned_to_name}</span>
+                        )}
+                      </div>
+                    </div>
+                    
+                    <button
+                      onClick={() => handleDelete(todo.id)}
+                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100 flex-shrink-0"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
+                </motion.div>
+              ))
+            ) : (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="bg-white rounded-2xl shadow-lg border border-gray-100 p-12 text-center"
+              >
+                <Target className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                <h3 className="text-xl font-semibold text-gray-600 mb-2">No tasks found</h3>
+                <p className="text-gray-400">Start by creating your first task or adjust your filters</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </div>
     </div>
   );

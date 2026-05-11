@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { getDB } from '../config/db.ts';
 import { generateToken } from '../utils/generateToken.ts';
+import { createNotification } from '../utils/notificationHelper.ts';
 
 export const signup = async (req: Request, res: Response) => {
   const { name, email, password } = req.body;
@@ -58,7 +59,6 @@ export const login = async (req: Request, res: Response) => {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
-    // Check if user is blocked
     if (user.status === 'blocked') {
       return res.status(403).json({ message: 'Your account has been blocked. Please contact admin.' });
     }
@@ -116,9 +116,8 @@ export const createUser = async (req: any, res: Response) => {
     const userId = result.insertId;
     const [newUser]: any = await db.query('SELECT id, name, email, role, status, created_at FROM users WHERE id = ?', [userId]);
 
-    // Emit real-time update
     const io = req.app.get('io');
-    io.emit('user_created', newUser[0]);
+    if (io) io.emit('user_created', newUser[0]);
 
     res.status(201).json(newUser[0]);
   } catch (error) {
@@ -151,7 +150,6 @@ export const deleteUser = async (req: any, res: Response) => {
 
   const { id } = req.params;
 
-  // Prevent admin from deleting themselves
   if (parseInt(id) === req.user.id) {
     return res.status(400).json({ message: 'Cannot delete your own account' });
   }
@@ -164,9 +162,8 @@ export const deleteUser = async (req: any, res: Response) => {
       return res.status(404).json({ message: 'User not found or cannot delete admin' });
     }
 
-    // Emit real-time update
     const io = req.app.get('io');
-    io.emit('user_deleted', { userId: id });
+    if (io) io.emit('user_deleted', { userId: id });
 
     res.json({ message: 'User deleted successfully' });
   } catch (error) {
@@ -188,7 +185,6 @@ export const toggleUserStatus = async (req: any, res: Response) => {
     return res.status(400).json({ message: 'Invalid status. Use "active" or "blocked"' });
   }
 
-  // Prevent admin from blocking themselves
   if (parseInt(id) === req.user.id) {
     return res.status(400).json({ message: 'Cannot change your own status' });
   }
@@ -203,9 +199,8 @@ export const toggleUserStatus = async (req: any, res: Response) => {
       return res.status(404).json({ message: 'User not found or cannot modify admin' });
     }
 
-    // Emit real-time update
     const io = req.app.get('io');
-    io.emit('user_updated', updatedUser[0]);
+    if (io) io.emit('user_updated', updatedUser[0]);
 
     res.json(updatedUser[0]);
   } catch (error) {
@@ -275,15 +270,14 @@ export const assignTask = async (req: any, res: Response) => {
   try {
     const db = getDB();
     
-    // Check if assigned user exists
-    const [user]: any = await db.query('SELECT id FROM users WHERE id = ?', [assigned_to]);
+    const [user]: any = await db.query('SELECT id, name FROM users WHERE id = ?', [assigned_to]);
     if (user.length === 0) {
       return res.status(404).json({ message: 'User not found' });
     }
 
     const [result]: any = await db.query(
-      'INSERT INTO todos (user_id, assigned_to, title, description, priority, due_date) VALUES (?, ?, ?, ?, ?, ?)',
-      [req.user.id, assigned_to, title, description, priority || 'medium', due_date]
+      'INSERT INTO todos (user_id, assigned_to, title, description, priority, due_date, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [req.user.id, assigned_to, title, description, priority || 'medium', due_date, 'pending']
     );
 
     const [newTodo]: any = await db.query(`
@@ -297,9 +291,21 @@ export const assignTask = async (req: any, res: Response) => {
       WHERE t.id = ?
     `, [result.insertId]);
 
-    // Emit real-time update
     const io = req.app.get('io');
-    io.emit('todo_assigned', { todo: newTodo[0], assignedTo: assigned_to });
+    if (io) {
+      io.emit('todo_assigned', { todo: newTodo[0], assignedTo: assigned_to });
+      
+      const notification = await createNotification(
+        assigned_to,
+        'task_assigned',
+        `Admin assigned you a new task: "${title}"`,
+        result.insertId
+      );
+      if (notification) {
+        io.to(`user_${assigned_to}`).emit('new_notification', notification);
+        console.log('Assignment notification sent to user:', assigned_to);
+      }
+    }
 
     res.status(201).json(newTodo[0]);
   } catch (error) {
@@ -308,6 +314,7 @@ export const assignTask = async (req: any, res: Response) => {
   }
 };
 
+// ==================== NOTIFICATION FUNCTIONS ====================
 
 // Get notifications for user
 export const getNotifications = async (req: any, res: Response) => {
@@ -317,10 +324,65 @@ export const getNotifications = async (req: any, res: Response) => {
       SELECT n.*, t.title as task_title
       FROM notifications n
       LEFT JOIN todos t ON n.todo_id = t.id
-      WHERE n.user_id = ?
+      WHERE n.user_id = ? AND n.is_deleted = FALSE
       ORDER BY n.created_at DESC
       LIMIT 50
     `, [req.user.id]);
+    res.json(notifications);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// Get unread notification count
+export const getUnreadNotificationCount = async (req: any, res: Response) => {
+  try {
+    const db = getDB();
+    const [result]: any = await db.query(
+      'SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND is_read = FALSE AND is_deleted = FALSE',
+      [req.user.id]
+    );
+    res.json({ count: result[0].count });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// Get filtered notifications
+export const getFilteredNotifications = async (req: any, res: Response) => {
+  const { type, is_read, limit } = req.query;
+  
+  try {
+    const db = getDB();
+    let query = `
+      SELECT n.*, t.title as task_title
+      FROM notifications n
+      LEFT JOIN todos t ON n.todo_id = t.id
+      WHERE n.user_id = ? AND n.is_deleted = FALSE
+    `;
+    const params: any[] = [req.user.id];
+
+    if (type && type !== 'all') {
+      query += ' AND n.type = ?';
+      params.push(type);
+    }
+
+    if (is_read === 'true') {
+      query += ' AND n.is_read = TRUE';
+    } else if (is_read === 'false') {
+      query += ' AND n.is_read = FALSE';
+    }
+
+    query += ' ORDER BY n.created_at DESC';
+    
+    if (limit) {
+      query += ' LIMIT ?';
+      params.push(parseInt(limit as string));
+    }
+
+    const [notifications]: any = await db.query(query, params);
     res.json(notifications);
   } catch (error) {
     console.error(error);
@@ -346,10 +408,139 @@ export const markNotificationRead = async (req: any, res: Response) => {
 export const markAllNotificationsRead = async (req: any, res: Response) => {
   try {
     const db = getDB();
-    await db.query('UPDATE notifications SET is_read = TRUE WHERE user_id = ?', [req.user.id]);
+    await db.query('UPDATE notifications SET is_read = TRUE WHERE user_id = ? AND is_deleted = FALSE', [req.user.id]);
     res.json({ message: 'All notifications marked as read' });
   } catch (error) {
     console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// Delete single notification
+export const deleteNotification = async (req: any, res: Response) => {
+  const { id } = req.params;
+  try {
+    const db = getDB();
+    await db.query('UPDATE notifications SET is_deleted = TRUE WHERE id = ? AND user_id = ?', [id, req.user.id]);
+    res.json({ message: 'Notification deleted' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// Clear all notifications
+export const clearAllNotifications = async (req: any, res: Response) => {
+  try {
+    const db = getDB();
+    await db.query('UPDATE notifications SET is_deleted = TRUE WHERE user_id = ?', [req.user.id]);
+    res.json({ message: 'All notifications cleared' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// Admin: Delete any note
+export const adminDeleteNote = async (req: any, res: Response) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ message: 'Access denied. Admin only.' });
+  }
+
+  const { id } = req.params;
+
+  try {
+    const db = getDB();
+    
+    const [noteRows]: any = await db.query(`
+      SELECT n.*, u.name as user_name 
+      FROM notes n 
+      JOIN users u ON n.user_id = u.id 
+      WHERE n.id = ?
+    `, [id]);
+    
+    if (noteRows.length === 0) {
+      return res.status(404).json({ message: 'Note not found' });
+    }
+    
+    const note = noteRows[0];
+    
+    const [result]: any = await db.query('DELETE FROM notes WHERE id = ?', [id]);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Note not found' });
+    }
+
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('note_deleted', { 
+        noteId: parseInt(id), 
+        userId: note.user_id,
+        deletedBy: 'admin',
+        adminId: req.user.id 
+      });
+    }
+
+    res.json({ 
+      message: 'Note deleted successfully by admin',
+      noteId: parseInt(id),
+      noteTitle: note.title,
+      noteUser: note.user_name
+    });
+  } catch (error) {
+    console.error('Admin error deleting note:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// Admin: Delete any todo
+export const adminDeleteTodo = async (req: any, res: Response) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ message: 'Access denied. Admin only.' });
+  }
+
+  const { id } = req.params;
+
+  try {
+    const db = getDB();
+    
+    const [todoRows]: any = await db.query(`
+      SELECT t.*, u.name as user_name 
+      FROM todos t 
+      JOIN users u ON t.user_id = u.id 
+      WHERE t.id = ?
+    `, [id]);
+    
+    if (todoRows.length === 0) {
+      return res.status(404).json({ message: 'Todo not found' });
+    }
+    
+    const todo = todoRows[0];
+    
+    const [result]: any = await db.query('DELETE FROM todos WHERE id = ?', [id]);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Todo not found' });
+    }
+
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('todo_deleted', { 
+        todoId: parseInt(id), 
+        userId: todo.user_id,
+        deletedBy: 'admin',
+        adminId: req.user.id 
+      });
+    }
+
+    res.json({ 
+      message: 'Todo deleted successfully by admin',
+      todoId: parseInt(id),
+      todoTitle: todo.title,
+      todoUser: todo.user_name
+    });
+  } catch (error) {
+    console.error('Admin error deleting todo:', error);
     res.status(500).json({ message: 'Server error' });
   }
 };

@@ -17,7 +17,7 @@ async function startServer() {
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
     cors: {
-      origin: "*",
+      origin: ["http://localhost:5173", "http://localhost:3000"],
       methods: ["GET", "POST", "PUT", "DELETE"]
     }
   });
@@ -30,7 +30,10 @@ async function startServer() {
   await createDefaultAdmin();
 
   // Middleware
-  app.use(cors());
+  app.use(cors({
+    origin: ["http://localhost:5173", "http://localhost:3000"],
+    credentials: true
+  }));
   app.use(express.json());
 
   // Make io accessible in routes
