@@ -29,11 +29,11 @@ const Sidebar: React.FC = () => {
     <>
       {/* Mobile Menu Button */}
       <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="lg:hidden fixed top-4 left-4 z-50 p-3 bg-gradient-to-r from-[#3b82f6] to-[#2863af] text-white rounded-xl shadow-lg hover:scale-105 transition-transform"
-      >
-        {isOpen ? <X size={24} /> : <Menu size={24} />}
-      </button>
+  onClick={() => setIsOpen(!isOpen)}
+  className="lg:hidden fixed top-2 left-1 z-50 p-3 bg-gradient-to-r from-[#3b82f6] to-[#2863af] text-white rounded-xl shadow-lg hover:scale-105 transition-transform"
+>
+  {isOpen ? <X size={24} /> : <Menu size={24} />}
+</button>
 
       {/* Overlay */}
       {isOpen && (
